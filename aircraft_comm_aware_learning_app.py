@@ -1,8 +1,25 @@
-
-
-
 #Imports
+from multiprocessing import Pool
+import select
+import time
+import sys
+import argparse
+from numpy import as np
 
+sys.path.insert(0,'../PyUAS') #get the path to the PyUAS Folder
+sys.path.insert(0,'../PyUAS/protobuf') #get the path to the protobuf format
+import PyPackets
+import PyPackets_pb2
+import Subscriber
+import assorted_lib
+
+NodeA = {} #Sum of all the pl error values
+NodeA_Ct = {} #number of values being summed
+NodeB = {}
+NodeB_Ct = {}
+NodeC = {}
+NodeC_Ct = {}
+numberOfMeasurements = 0
 
 def handleRFMsg(packetData):
 	#we have just received a packets data
@@ -11,16 +28,67 @@ def handleRFMsg(packetData):
 	rf_msg = PyPackets_pb2.RF_Data_Msg()
 	rf_msg.ParseFromString(datastr)
 	#get the relevant information out of the data structure
-	#- position and errors in pathloss measurements
-	#- add these to a global dictionary 
+	#Get grid location (Use function we will put in splat processing)
 	
+	#ignoring altitudes
+	counter = 0
+	for n in rf_msg.rfNode:
+		a = n.xgridNum
+		b = n.ygridNum
+		if counter == 0:
+			NodeA[a,b] = n.pl_error
+			NodeA_Ct[a,b] += 1
+		elif counter == 1:
+			NodeB[a,b] = n.pl_error
+			NodeB_Ct[a,b] += 1
+		elif counter == 2:
+			NodeC[a,b] = n.pl_error
+			NodeC_Ct[a,b] += 1
+			
+	#Added the desired measurement error to the dictionaries
+	numberOfMeasurements += 1
 	
+def buildNodePacket(subscribers, PacketCounterNode): 
+	pkt_id = PyPacket.PacketID(PyPacket.PacketPlatform.AIRCRAFT,10)
+	pkt = PyPacket.PyPacket()
+	pkt.setDataType(PyPacket.PacketDataType.PKT_NODE_HEARTBEAT)
+	pkt.setID(pkt_id.getBytes())
+	#Define the basic components
+	msg = PyPackets_pb2.NodeHeartBeat()
+	msg.packetNum = PacketCounterNode
+	msg.ID = str(pkt.getID())
+	msg.time = time.time()
+	#Add all the subscriber infos
+	c = 0;
+	for n in subscribers:
+		new = msg.sub.add()
+		new.id = str(n.ID)
+		new.datatype = str(n.TYPE)
+		new.port = n.PORT
+		new.address = n.IP
+		c += 1
+	#End loop
+	#serialize the data
+	data_str = msg.SerializeToString()
+	pkt.setData(data_str) #normally insert a data building part
+	pkt.displayPacket()
+	del msg
+	return pkt.getPacket() #return the byte array msg
 
+
+#TODO FINISH THIS TASK
 class TelemetryTask(threading.Thread):
-	def __init__(self):
+	def __init__(self, aircraftNumber, myport, IPaddress):
 		threading.Thread.__init__(self)
 		
 		#stuff
+		self.MYPORT = myport
+		self.NMPORT = 16000
+		self.ip = 'localhost'
+		
+		self.sublist = []
+		#RF_DATA_MSG
+		self.sublist.add(Subscriber.Subscriber(PyPacket.PacketDataType.PKT_RF_DATA_MSG, PyPacket.PacketID(PyPacket.PacketPlatform.AIRCRAFT,self.Num).getBytes,self.PORT,'localhost') #RF Model from GP Task		
 		
 	def run():
 		#iniitalize run conditionals
@@ -30,11 +98,15 @@ class TelemetryTask(threading.Thread):
 		my_out_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 		my_in_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 		
-		my_in_socket.bind(('',16000))
+		my_in_socket.bind(('',self.MYPORT)) #Update to my port
 		
 		#Create lists for select
 		in_sockets = [my_in_socket]
 		out_sockets = [my_out_socket]
+		
+		#Add subscriber message to msg queue to be sent
+		msg = buildNodePacket(self.sublist,0) #do we want to send this at set intervals?
+		msg_queue.put(msg)
 		
 		#Loop Forever
 		while not shutdown_event.is_set():
@@ -52,6 +124,7 @@ class TelemetryTask(threading.Thread):
 					handleRFMsg(newPkt.getData)
 				else:
 					#Unexpected message 
+					print 'Unexpected Message'
 			#END 
 			
 			for s in writable:
@@ -62,7 +135,7 @@ class TelemetryTask(threading.Thread):
 					#queue is empty or blocked
 					time.sleep(0.01)
 				else:
-					s.sendto(next_msg[1],next_msg[0])
+					s.sendto(next_msg,('localhost',self.NMPORT))#Should always be localhost at 16000 
 		#End While Loop
 		
 		my_out_socket.close()
@@ -70,32 +143,99 @@ class TelemetryTask(threading.Thread):
 		
 		print('\tTelemtryTask [closed]')
 
+#TODO Finish the creation of the data in the Task startup
 class GaussianProcessTask(threading.Thread):
-	def __init__(self,Logmode):
+	def __init__(self,Logmode, GridInfo, centerPoint, planningMode, filenames):
 		threading.Thread.__init__(self)
 		
 		#Logger
 		self.logger = logging.getLogger("CommAwareLearning:GaussianProcessTask")
-		self.logger.setLevel(Logmode)
+		self.logger.setLevel(Logmode) 
 		
 		#Initialize GP information (Check out my gp task from earlier versions)
 		self.Kernel = Matern(length_scale = 25, nu = 5/2) + ConstantKernel() + WhiteKernel(noise_level=1)
-		self.threshold = Threshold
-		self.MAX_RANGE = MAX_RANGE
 	
+		#Either by File here or elsewhere?
+		self.xmin = GridInfo[0]
+		self.xmax = GridInfo[1]
+		self.ymin = GridInfo[3]
+		self.ymax = GridInfo[4]
+		self.xspacing = GridInfo[2]
+		self.yspacing = GridInfo[5]
+		
+		self.centerLat = centerPoint[0]
+		self.centerLon = centerPoint[1]
+		
+		#Load the propagation model into memory from file
+		if (len(filenames) == 1):
+			self.model_NodeA = {}
+			self.NumberOfNodes = 1
+		elif (len(filenames) == 2):
+			self.model_NodeA = {}
+			self.model_NodeB = {}
+			self.model_NumberOfNodes = 2
+		elif (len(filenames) > 2):
+			self.model_NodeA = {}
+			self.model_NodeB = {}
+			self.model_NodeC = {}
+			self.NumberOfNodes = 3
+		counter = 0
+		for f in filenames:
+			#find the file
+			file = open(f, r)
+			for b in range(0,int(ygridlength):
+				for a in range(0,int(xgridlength):
+					#set the byte number
+					byteNumber = (a*b + a)*4 
+					#Seek to location in file
+					file.seek(byteNumber)
+					#read float 
+					bytesIn = file.read(4) #read 4 bytes
+					#unpack into float? 
+					thisfloat = struct.unpack('f',bytesIn)
+					if counter == 0:
+						#add it to Node A
+						self.model_NodeA[a,b] = thisfloat
+					elif counter == 1:
+						#add it to Node B
+						self.model_NodeB[a,b] = thisfloat
+					elif counter == 2:
+						#add it to Node C
+						self.model_NodeC[a,b] = thisfloat
+			#End loop through grids
+			counter += 1
+		#end for loop
+		
+		self.mode =  planningMode #some sort of string
+		
 	def run():
-		#Check out the gp from the subscriber 
+		#Create the messages for Protobuf
+		BigMsg = PyPackets_pb2.RF_STACKED_MAP_MSG()
+		msgA = BigMsg.mapMsg.add()
+		msgB = BigMsg.mapMsg.add()
+		msgC = BigMsg.mapMsg.add()
+		
+		WPMsg = PyPackets_pb2.Waypoint()
 		
 		#Set the gaussian process
 		gp = gaussian_process.GaussianProcessRegressor(kernel = self.Kernel)
 		
-		#Message type setup
-		#_TODO_
+		#STACKED MAP MSG PACKET
+		pkt_id = PyPacket.PacketID(PyPacket.PacketPlatform.AIRCRAFT,self.Number)
+		thisPacket = PyPackets.PyPacket()
+		thisPacket.setDataType(PyPacket.PacketDataType.PKT_RF_STACKED_MAP_MSG)
+		thisPacket.setID(pkt_id.getBytes())
 		
-		#Prediction Zone
+		#WAYPOINT PACKET
+		pkt_id = PyPacket.PacketID(PyPacket.PacketPlatform.AIRCRAFT,self.Number)
+		thatPacket = PyPackets.PyPacket()
+		thatPacket.setDataType(PyPacket.PacketDataType.PKT_WAYPOINT)
+		thatPacket.setID(pkt_id.getBytes())
+		
+		#Prediction Zone for the GP
 		xpred = []
-		grid_x_points = np.arange(xmin,xmax+1,xspacing)
-		grid_y_points = np.arange(ymin,ymax+1,yspacing)
+		grid_x_points = np.arange(self.xmin,self.xmax+1,self.xspacing)
+		grid_y_points = np.arange(self.ymin,self.ymax+1,self.yspacing)
 		
 		for a in range(0,len(grid_x_points)):
 			for b in range(0,len(grid_y_points)):
@@ -106,52 +246,268 @@ class GaussianProcessTask(threading.Thread):
 		
 		GPTimeLast = time.time()
 		GPTimeNow = GPTimeLast()
-		GPRate = 
-		packetNum = 
+		GPRate = 60 #at least this amount of time (60s)
+		packetNum = 0 #start at 0
+		
+		Na = {}
+		Nb = {}
+		Nc = {}
+		
+		#Multiple worker processes for the GP Learning part
+		p = Pool(3)
+		
+		#Message type setup
+		#THIS IS GONNA CAUSE AN ISSUE WITH OUR CURRENT MSG HANDLING SYSTEM!!!
+		msgA.ID = 'NodeA'
+		msgA.xGrids = len(grid_x_points)
+		msgA.yGrids = len(grid_y_points)
+		msgA.xspacing = self.xspacing
+		msgA.yspacing = self.yspacing
+		
+		msgB.ID = 'NodeB'
+		msgB.xGrids = len(grid_x_points)
+		msgB.yGrids = len(grid_y_points)
+		msgB.xspacing = self.xspacing
+		msgB.yspacing = self.yspacing
+		
+		msgC.ID = 'NodeC'
+		msgC.xGrids = len(grid_x_points)
+		msgC.yGrids = len(grid_y_points)
+		msgC.xspacing = self.xspacing
+		msgC.yspacing = self.yspacing
 		
 		#Loop
 		while not shutdown_event.is_set():
 			if time.time() - GPTimeLast >= GPRate:
-				#Get the data 
-				GPS_RSSI_DATA_BUFFER = GPS_RSSI_DATA #??
-				#Grab teh data
+			
+				#Initialize empty arrays
 				Xdata = []
-				Ydata = []
-				for d in GPS_RSSI_DATA_BUFFER:
-					sum1 = GPS_RSSI_DATA_BUFFER[d].get('sum')
-					count1 = GPS_RSSI_DATA_BUFFER[d].get('count')
-					currentAve = sum1/float(count1)
-					x1 = GPS_RSSI_DATA_BUFFER[d].get('x_point')
-					y1 = GPS_RSSI_DATA_BUFFER[d].get('y_point')
-					Xdata.append([x1,y1])
-					Ydata.append([currentAve])
-				#Finished getting data; set the dtype
-				X = np.array(Xdata, dtype = np.float32)
-				Y = np.array(Ydata, dtype = np.float32)
+				YdataNodeA = []
+				YdataNodeB = []
+				YdataNodeC = []
 				
-				#Learn the Hyper Parameters
-				self.logger.info("Learning the GP Hyper Parameters")
-				gpStart = time.time()
-				gp.fit(X,Y)
-				gpFinished = time.time()
-				self.logger.inf("Time Taken for GP Learning: %f" % (gpFinished-gpStart))
+				#Process data
+				for a in range(0,xgridsize):
+					for b in range(0,ygridsize):
+						#calculate the x data and ydata for each of the GPs
+						Xdata.append([a,b])
+						YdataNodeA.append(NodeA[a,b]/NodeA_Ct[a,b])
+						YdataNodeB.append(NodeB[a,b]/NodeB_Ct[a,b])
+						YdataNodeC.append(NodeC[a,b]/NodeC_Ct[a,b])
+						
+				#Spin off 3 different "processes/multitasks" for each of the GPs with their associated data
+				results = p.map(GP_Processing,[[Xdata,YdataNodeA,grid_x_points,grid_y_points],[Xdata,YdataNodeB,grid_x_points,grid_y_points],[Xdata,YdataNodeC,grid_x_points,grid_y_points]])
+					
+				#Can we guarentee the order they were processed?
+				NAR = results[0]
+				NBR = results[1]
+				NCR = results[2]
+				ttLA = NAR[0]
+				ttPA = NAR[1]
+				ZnA = NAR[2]
+				ttLB = NBR[0]
+				ttPB = NBR[1]
+				ZnB = NBR[2]
+				ttLC = NCR[0]
+				ttPC = NCR[1]
+				ZnC = NCR[2]
 				
-				#Predicting with learned model
-				self.logger.info("Predicting with Learned GP Model")
-				gpStart = time.time()
-				y_pred, sigma = gp.predict(xpred,return_std=True)
-				gpFinished = time.time()
-				self.logger.info("TimeTaken for GP Prediction: %f" % (gpFinished - gpStart))
+				#Combine the learned errors with the original prediction
+				for a in range(0, xgridsize):
+					for b in range(0, ygridsize):
+						Na[a,b] = ZnA[a,b] + self.model_NodeA[a,b]
+						Nb[a,b] = ZnB[a,b] + self.model_NodeB[a,b]
+						Nc[a,b] = ZnC[a,b] + self.model_NodeC[a,b]
+						#Add these to the planning thingies
+						newCellA = msgA.cell.add()
+						newCellA.xgridNum = a
+						newCellA.ygridNum = b
+						newCellA.est_path_loss = Na[a,b]
+						newCellA.path_loss_err = ZnA[a,b]
+						newCellA.pred_path_loss = self.model_NodeA[a,b]
+						
+						newCellB = msgB.cell.add()
+						newCellB.xgridNum = a
+						newCellB.ygridNum = b
+						newCellB.est_path_loss = Nb[a,b]
+						newCellB.path_loss_err = ZnB[a,b]
+						newCellB.pred_path_loss = self.model_NodeB[a,b]
+						
+						newCellC = msgC.cell.add()
+						newCellC.xgridNum = a
+						newCellC.ygridNum = b
+						newCellC.est_path_loss = Nc[a,b]
+						newCellC.path_loss_err = ZnC[a,b]
+						newCellC.pred_path_loss = self.model_NodeC[a,b]
 				
-				#Convert to mesh with Predicted value for a given X,Y Coord
-				Z = np.zeros((len(grid_x_points),len(grid_y_points)))
-				counter = 0
-				 
-				for a in range(0,len(grid_x_points)):
-					for b in range(0,len(grid_y_points)):
-						Z[a,b] = y_pred[counter]
-						counter = counter + 1
+				#Increment packet Number
+				packetNum += 1
+				
+				#Store the rest of the msg data
+				msgA.time = time.time()
+				msgA.packetNum = packetNum
+				msgA.gp_iteration_number = packetNum
+				msgA.gp_learning_time = ttLA
+				msgA.gp_prediction_time = ttPA
+				
+				msgB.time = time.time()
+				msgB.packetNum = packetNum
+				msgB.gp_iteration_number = packetNum
+				msgB.gp_learning_time = ttLB
+				msgB.gp_prediction_time = ttPB
+				
+				msgC.time = time.time()
+				msgC.packetNum = packetNum
+				msgC.gp_iteration_number = packetNum
+				msgC.gp_learning_time = ttLC
+				msgC.gp_prediction_time = ttPC
+				#Delete the repeated msg types
+				#TODO!
+				
+				#Go ahead and add thisPacket to the queue
+				ds = BigMsg.SerializeToString()
+				thisPacket.setData(ds)
+				#Stuff into the great que
+				msg_queue.put(thisPacket.getPacket())
+				
+				#Next is planning!
+				#which mode is being used; 
+					#what two nodes are we looking at?
+				Data = costfunction(Na,Nb)
+				gridPoints, cost = findBestRFPosition(Data)
+				#Some how get LLA? 
+				E = grid_x_points[gridPoints[0]]
+				N = grid_y_points[gridPoints[1]]
+				LLA = assorted_lib.ENU2LLA([E,N,0],[self.centerLat,self.centerLon])
+				
+				WPMsg.LLA_Pos.x = LLA[0]
+				WPMsg.LLA_Pos.y = LLA[1]
+				WPMsg.LLA_Pos.z = LLA[2]
+				WPMsg.cost = cost
+				WPMsg.costF1 = Na[gridPoints]
+				WpMsg.costF2 = Nb[gridPoints]
+				#Go ahead and thatPacket to the que
+				ds = WPMsg.SerializeToString()
+				thatPacket.setData(ds)
+				msg_queue.put(thatPacket.getPacket())
+			#End of if loop
+		#End of While loop
+		time.sleep(1) #sleep
+	#end of function
 		
 		
+def findBestRFPosition(FieldData):
+	storedPoint = [9999,9999] #x,y grids
+	costAtPoint = 999999
+	for a in range(0,xgridsize):
+		for b in range(0,ygridsize):
+			if (FieldData[a,b] < costAtPoint):
+				costAtPoint = FieldData[a,b]
+				storedPoint[0] = a
+				storedPoint[1] = b
+				#do we want a case if they are equal?
+			elif (FieldData[a,b] == costAtPoint)
+				print 'Found a point of equal value'
+			#else:
+				#it is not a better cost; move along
+				
+	return (storedPoint, costAtPoint)
 		
+def GP_Processing(Xdata,Ydata,grid_x_points,grid_y_points):
+	#Finished getting data; set the dtype
+	X = np.array(Xdata, dtype = np.float32)
+	Y = np.array(Ydata, dtype = np.float32)
+
+	#learn the hyper parameters
+	gpStart = time.time()
+	gp.fit(X,Y)
+	gpFinished = time.time()
+	timeToLearn = gpFinished - gpStart
 	
+	#predicting with the learned model
+	gpStart = time.time()
+	y_pred, sigma = gp.predict(xpred,return_std=True)
+	gpFinished = time.time()
+	timeToPredict = gpFinished - gpStart
+	
+	#Convert to mesh with Predicted value for a given X,Y Coord
+	Z = np.zeros((len(grid_x_points),len(grid_y_points)))
+	counter = 0
+	 
+	for a in range(0,len(grid_x_points)):
+		for b in range(0,len(grid_y_points)):
+			Z[a,b] = y_pred[counter]
+			counter = counter + 1
+			
+	#Return something useful
+	return (timeToLearn,timeToPredict,Z) #TODO! Change me??
+		
+if __name__  == "__main__":
+	#we need the prediction map stored
+	#we need to write the cost function calculation method
+	#Scenario 1: 2 Beacons and flying between them. 
+	#Scenario 2: 3 Beacons and rotating between flying between 2 of them at any given moment
+	# - always learn all 3 fields at the same time? do we want to spin off a multi-task thingy
+	
+	#Any Arguments???
+	#-ROI File Name
+	#-Planning Mode or is that from a telem cmd stream?
+	
+	#Load from file
+	meta_data_f = open(RoI_FILE,'r')
+	#Skip the defintions
+	for a in xrange(0,9):
+		meta_data_f.readline() #remove the header info
+	#Read the RoI info
+	centerLat = float(meta_data_f.readline()) #cast as float
+	centerLon = float(meta_data_f.readline()) #cast as float
+	north = float(meta_data_f.readline()) 
+	south = float(meta_data_f.readline())
+	east = float(meta_data_f.readline())
+	west = float(meta_data_f.readline())
+	xspacing = float(meta_data_f.readline())
+	yspacing = float(meta_data_f.readline())
+	#Get the antenna information
+	Antenna = []
+	for line in meta_data_f:
+		print(line)
+		Antenna.append(line)
+		
+	#Get the antenna locations or file names
+	antenna_names = []
+	strvalues = []
+	for ant in Antenna:
+		strvalues = ant.split(",")
+		antenna_names.append(strvalues[0]) #add all the string valued names
+		
+	#Calculate the X and Y Grid lengths
+	xgridlength = (east + west)/xspacing + 1
+	ygridlength = (north + south)/yspacing + 1
+	#center index
+	xcenterIndex = math.ceil(xgridlength/2);
+	ycenterIndex = math.ceil(ygridlength/2);
+	
+	GridInfo = [-west,east,xspacing,-south,north,yspacing]
+	centerPoint = [centerLat,centerLon]
+	planningMode = "SomeStringTODO"
+	
+	Logmode = "TBD" #need to make my own logger or use their own?
+	
+	#Start Telemetry Thread
+	telem = TelemetryTask(aircraftNumber, 14130, Ipaddress, gcsNumber)
+	telem.start()
+	#Start Sensing Thread
+	modelling = GaussianProcessTask(Logmode, GridInfo, centerPoint, planningMode, antenna_names)
+	modelling.start()
+	
+	while threading.active_count() > 1:
+		try:
+			time.sleep(1)
+		except(KeyboardInterrupt, SystemExit):
+			#log message
+			shutdown_event.set()
+		#end try
+	#end while
+	#log ending message
+	sys.exit()
+	#END MAIN LOOP

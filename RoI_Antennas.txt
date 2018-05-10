@@ -1,0 +1,19 @@
+#CenterLat
+#CenterLon
+#North Distance (meters)
+#South Distance (meters)
+#East Distance (meters)
+#West Distance (meters)
+#x spacing (meters)
+#y spacing (meters)
+#AntennaName,Lat,Lon,Antenna Height (m),Pt (dBm),Gt (dBi)
+40.1304
+-105.3928
+1500
+1500
+1500
+1500
+50
+50
+NodeA,40.1304,-105.3928,2,30,3
+NodeB,39.4940,-104.3921,2,30,3
