@@ -151,6 +151,12 @@ class GaussianProcessTask(threading.Thread):
 		#Logger
 		self.logger = logging.getLogger("CommAwareLearning:GaussianProcessTask")
 		self.logger.setLevel(Logmode) 
+		myhandler = logging.StreamHandler()
+		self.logger.addHandler(myhandler)
+		
+		self.packet_log = PyPacketLogger.PyPacketLogger(('Aircraft_' + str(AIRCRAFT_ID) + '_GP_Task_Log'))
+		self.packet_log.init()
+		self.logger.info("Logging RF Map Packets to: %s", self.packet_log.logname)
 		
 		#Initialize GP information (Check out my gp task from earlier versions)
 		self.Kernel = Matern(length_scale = 25, nu = 5/2) + ConstantKernel() + WhiteKernel(noise_level=1)
