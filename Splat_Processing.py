@@ -68,8 +68,9 @@ def SPLATDataGenerationMethod2(Aircraft_Height):
 	c = 0
 	for a in xrange(0,int(xgridlength)):
 		for b in xrange(0,int(ygridlength)):
-			PathLossField[a,b] = c
-			c += 1
+			PathLossField[a,b] = 0
+			#PathLossField[a,b] = c
+			#c += 1
 	
 	
 	Antenna = []
@@ -149,7 +150,7 @@ def SPLATDataGenerationMethod2(Aircraft_Height):
 			for a in range(0,int(xgridlength)): 
 				#outstring += str(PathLossField[a,b])
 				datafile.write(struct.pack('f',PathLossField[a,b])) #write the float to the file
-				print("wrote this value",PathLossField[a,b])
+				#print("wrote this value",PathLossField[a,b])
 		#write that string out
 		#datafile.write(bytearray(outstring))
 		datafile.close()
@@ -247,7 +248,7 @@ def testFile():
 	
 if __name__  == "__main__":
 	print('Starting Function')
-	#SPLATDataGenerationMethod2(100)
+	SPLATDataGenerationMethod2(100)
 	#testGridIndexSystem()
-	testFile()
+	#testFile()
 	print('Function Finished')
