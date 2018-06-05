@@ -21,6 +21,7 @@ import PyPackets_pb2
 import PyPacketLogger
 import Subscriber
 import assorted_lib
+import Splat_Processing as SplatProcessing
 
 NodeA = {}  # Sum of all the pl error values
 NodeA_Ct = {}  # number of values being summed
@@ -247,6 +248,7 @@ class GaussianProcessTask(threading.Thread):
         self.centerLon = centerPoint[1]
 
         # Load the propagation model into memory from file
+        self.NumberOfNodes = 0
         if (len(filenames) == 1):
             self.model_NodeA = {}
             self.NumberOfNodes = 1
@@ -259,6 +261,8 @@ class GaussianProcessTask(threading.Thread):
             self.model_NodeB = {}
             self.model_NodeC = {}
             self.NumberOfNodes = 3
+        else:
+            print 'ERROR!!!'
         counter = 0
         for f in filenames:
             # find the file
@@ -267,7 +271,7 @@ class GaussianProcessTask(threading.Thread):
                 for a in range(0, int(xgridlength)):
                     #Replace this part with the function call from Splat_Processing
                     # set the byte number
-                    byteNumber = findPLinFile(a,b,xgridlength)
+                    byteNumber = SplatProcessing.findPLinFile(a,b,xgridlength)
                     # Seek to location in file
                     file.seek(byteNumber)
                     # read float
