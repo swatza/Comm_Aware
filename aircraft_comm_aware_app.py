@@ -27,6 +27,8 @@ import numpy as np
 sys.path.insert(0, '../PyUAS')  # get the path to the PyUAS Folder
 sys.path.insert(0, '../PyUAS/protobuf')  # get the path to the protobuf format
 import PyPacket
+import PyPacketMsgBuilds
+import PyPacketTypeCheck
 import PyPackets_pb2
 import Subscriber
 import RF_Models
@@ -49,102 +51,9 @@ myState = 0
 
 # Which Nodes to Learn
 planning_nodes = []
+learning_nodes = []
 # Which nodes to measure
 measuring_nodes = []
-
-
-# Global Pixhawk Status information
-
-def isCommand(pkt):
-    if pkt.getDataType() == PyPacket.PacketDataType.PKT_GCS_CMD:
-        # log received gcs cmd message
-        return True
-    else:
-        return False
-
-
-def isLearnedModel(pkt):
-    if pkt.getDataType() == PyPacket.PacketDataType.PKT_RF_STACKED_MAP_MSG:
-        # log received rf model msg
-        return True
-    else:
-        return False
-
-
-def isStateInfo(pkt):
-    if pkt.getDataType() == PyPacket.PacketDataType.PKT_AUTOPILOT_PIXHAWK:
-        return True
-    else:
-        return False
-
-
-def parseStackedMapMsg(data, nodes_to_learn, x_grids, y_grids):
-    # update the models for the nodes that we have
-    msg = PyPackets_pb2.RF_Stacked_Map_Msg
-    msg.ParseFromString(data)
-
-    # Get the data sets so we can run the planning algorithm
-    My_Maps = {}
-    this_map = {}
-    for map in msg.mapMsg:
-        # loop through and grab all the cells in the map
-        for c in map.cell:
-            x = c.xgridNum
-            y = c.ygridNum
-            this_map[x, y] = c.est_path_loss
-        # use the map id to store into MyMaps
-        My_Maps[map.ID] = this_map
-        # clear the map
-        del this_map
-
-    # TODO! Fix the inputs
-    # Run the waypoint calculation between desired nodes
-    best_location = find_best_rf_position(My_Maps, nodes_to_learn, x_grids, y_grids)
-
-    # Hand it to something to be made into a mission
-    # TODO! figure out the pixhawk shit (maybe return to main loop? serial though is in the sensor loop)
-
-
-def find_best_rf_position(maps, nodes, x, y):
-    # if the map contains the node key (how do we check this in python?)
-    if len(nodes) == 2:
-        i = 0
-        location = find_optimal_2_node_location(maps[nodes[i]], maps[nodes[i + 1]], x, y)
-        return location
-    else:
-        print 'Error in Number of Nodes; cannot find best location'
-        return None
-
-
-def find_optimal_2_node_location(MapA, MapB, x, y):
-    # loop through the maps
-    storedCost = 9999
-    storedLocation = [0, 0]
-    # THIS DOESN'T WORK BECAUSE A,B is negative and positive i believe
-    for a in x:
-        for b in y:
-            # calculate the cost
-            results = MapA[a, b] + MapB[a, b] + math.fabs(MapA[a, b] - MapB[a, b])
-            if storedCost > results:
-                # store the new best cost
-                storedCost = results
-                # store their location
-                storedLocation = [a, b]
-            elif storedCost == results:
-                print 'Multiple best locations found: Keeping previous results'
-    # End for loops
-    print "The best location was found to have a cost of %f" % storedCost
-    return storedLocation
-
-
-# Parse the command from the GCS
-def parseCommand(data):
-    # Determine the information in the message
-    pass
-    # Set the mode of operation
-    # -Passive
-    # -Autonomous
-
 
 def parseStateInfo(data, CLLA):
     # parse the state information
@@ -161,64 +70,6 @@ def parseStateInfo(data, CLLA):
     # Set the state as 1A Kinematics for now
     global myState
     myState = [NED[0],NED[1],0,msg.attitude.z,0,NED[2],msg.airspeed]
-    # end loop
-
-
-def buildLearnCommand(counter, NodeListStrings):
-    pkt_id = PyPacket.PacketID(PyPacket.PacketPlatform.AIRCRAFT, 10)
-    pkt = PyPacket.PyPacket()
-    pkt.setDataType(PyPacket.PacketDataType.PKT_RF_LEARN_CMD)
-    pkt.setID(pkt_id.getBytes())
-    msg = PyPackets_pb2.RF_Learn_Cmd()
-    msg.packetNum = counter
-    msg.ID = str(pkt.getID())
-    msg.time = time.time()
-    for string in NodeListStrings:
-        new = msg.NodesToLearn.add()
-        new = string
-    # End for loop
-    data_str = msg.SerializeToString()
-    pkt.setData(data_str)
-    del msg
-    return pkt.getPacket()
-
-
-# TODO FIX THIS COPIED FUNCTION
-# Build the Node Packet for Subscribers to let the network manager know what this process wants
-def buildNodePacket(subscribers, PacketCounterNode):
-    pkt_id = PyPacket.PacketID(PyPacket.PacketPlatform.AIRCRAFT, 10)
-    pkt = PyPacket.PyPacket()
-    pkt.setDataType(PyPacket.PacketDataType.PKT_NODE_HEARTBEAT)
-    pkt.setID(pkt_id.getBytes())
-    # Define the basic components
-    msg = PyPackets_pb2.NodeHeartBeat()
-    msg.packetNum = PacketCounterNode
-    msg.ID = str(pkt.getID())
-    msg.time = time.time()
-    # Add all the subscriber infos
-    c = 0;
-    for n in subscribers:
-        new = msg.sub.add()
-        new.id = str(n.ID)
-        new.datatype = str(n.TYPE)
-        new.port = n.PORT
-        new.address = n.IP
-        new.msgfreq = n.FREQ
-        c += 1
-    # End loop
-    # serialize the data
-    data_str = msg.SerializeToString()
-    pkt.setData(data_str)  # normally insert a data building part
-    # pkt.displayPacket()
-    del msg
-    return pkt.getPacket()  # return the byte array msg
-
-
-'''
-To communicate sensor measurements and learned fields to the ground station for monitoring
-Uses Network Manager Process
-'''
-
 
 class TelemetryTask(threading.Thread):
 
@@ -254,7 +105,7 @@ class TelemetryTask(threading.Thread):
                                                   PyPacket.PacketID(sub_info_gcs[0], sub_info_gcs[1]).getBytes(),
                                                   self.PORT, 'localhost', 1))  # GCS Command Msgs
         # RF STACKED MSG
-        self.sublist.append(Subscriber.Subscriber(PyPacket.PacketDataType.PKT_RF_STACKED_MAP_MSG,
+        self.sublist.append(Subscriber.Subscriber(PyPacket.PacketDataType.PKT_WAYPOINT,
                                                   PyPacket.PacketID(sub_info_rf[0], sub_info_rf[1]).getBytes(),
                                                   self.PORT, 'localhost', 1))  # RF Model from GP Task
         # STATE MSG (Could be from a simulated source or not)
@@ -276,9 +127,11 @@ class TelemetryTask(threading.Thread):
         out_sockets = [my_out_socket]
 
         # Add subscriber message to msg queue to be sent
-        msg = buildNodePacket(self.sublist, 0)  # do we want to send this at set intervals?
+        msg = PyPacketMsgBuilds.buildNodeHeartBeat(self.ID, self.sublist, 0)  # do we want to send this at set intervals?
         msg_queue.put(msg)
         lastsubtime = time.time()
+        lastcmdtime = time.time()
+        learn_counter = 1;
 
         # Loop Forever
         while not shutdown_event.is_set():
@@ -288,7 +141,12 @@ class TelemetryTask(threading.Thread):
                 # Should we update the packetnumber?
                 msg_queue.put(msg)
 
-            # TODO! Add in a cmd to ask for a learn message
+            if(time.time() - lastcmdtime) > 60:
+                lastcmdtime = time.time()
+                #build command message
+                print("Sending Learn Command")
+                cmd_msg = PyPacketMsgBuilds.buildRFLearnCommand(self.ID,learn_counter,learning_nodes,planning_nodes,"true","error")
+                msg_queue.put(cmd_msg)
 
             # Check select
             readable, writable, exceptional = select.select(in_sockets, out_sockets, in_sockets)
@@ -300,13 +158,10 @@ class TelemetryTask(threading.Thread):
                 newPkt = PyPacket.PyPacket()
                 newPkt.setPacket(dataPkt)
                 # Parse packet
-                if isCommand(newPkt):
-                    self.logger.debug("Received Command Msg")
-                    parseCommand(newPkt.getData())
-                elif isLearnedModel(newPkt):
-                    self.logger.debug("Received Learned Model Msg")
-                    parseStackedMapMsg(newPkt.getData(), planning_nodes, self.grid_x_points, self.grid_y_points)
-                elif isStateInfo(newPkt):  # used for simulating the aircraft's position
+                if PyPacketTypeCheck.isWaypointMsg(newPkt):
+                    self.logger.debug("Received Waypoint Msg: WIP")
+                    #TODO! Handle the waypoint message
+                elif PyPacketTypeCheck.isAutoPilotPixhawkMsg(newPkt):  # used for simulating the aircraft's position
                     self.logger.debug("Received State Info Msg: Sim")
                     parseStateInfo(newPkt.getData(), self.CLLA)
                 else:
@@ -314,27 +169,30 @@ class TelemetryTask(threading.Thread):
                     self.logger.warning("Msg Parsing Problem: %s", 'Unexpected message type')
             # END
 
+            #TODO! Update with while loop to make sure more messagse are sent instead of 1 at a time
             for s in writable:
                 # Check to see if our output queue is empty
-                try:
-                    next_msg = msg_queue.get_nowait()
-                except Queue.Empty:
-                    # queue is empty or blocked
-                    time.sleep(0.01)
-                else:
-                    s.sendto(next_msg, ('localhost', self.NMPORT))  # should always be localhost:NMport
-                    self.logger.info("Message sent to: %s", ('localhost', self.NMPORT))
-        # End While Loop
+                while msg_queue.qsize() > 0:
+                    try:
+                        next_msg = msg_queue.get_nowait()
+                    except Queue.Empty:
+                        # queue is empty or blocked so stop looping
+                        break
+                    else:
+                        s.sendto(next_msg, ('localhost', self.NMPORT))  # should always be localhost:NMport
+                        self.logger.info("Message sent to: %s", ('localhost', self.NMPORT))
+                    #END TRY
+                #END WHILE QUE SIZE
+        # END WHILE RUNNING
 
         my_out_socket.close()
         my_in_socket.close()
 
         self.logger.info("CommAware Telemetry Task [Closed]")
-        print('\tTelemtryTask [closed]')
 
 
 class SensingTask(threading.Thread):
-    def __init__(self, antenna_names, altitude, grid_info, grid_info_2, logmode, center_pos, my_id, mode):
+    def __init__(self, antenna_names, altitude, grid_info, grid_info_2, logmode, center_pos, my_id, mode,clla):
         threading.Thread.__init__(self)
 
         # create logger
@@ -375,39 +233,42 @@ class SensingTask(threading.Thread):
             thisMap = {}
             secondMap = {}
             file = open(name + "_data_" + altitude + ".sdg", "r")
+            #TODO! Is this right on the -1 part?
             for b in range(0, int(self.ygridlength)-1):
                 for a in range(0, int(self.xgridlength)-1):
-                    #TODO! Same error as before; look at learning app to fix
                     # set the byte number
-                    byteNumber = Splat_Processing.findPLinFile(a, b, self.xgridlength-1)  # Is it minus 1??
+                    byteNumber = Splat_Processing.findPLinFile(a, b, self.xgridlength-1)
                     self.logger.debug("seeking to file at %i", byteNumber)
                     file.seek(byteNumber)
                     bytesIn = file.read(4)
                     thisfloat = struct.unpack('f', bytesIn)
                     self.logger.debug("Retrieved float from file: %f at %i, %i", thisfloat[0], a, b)
-                    thisMap[a, b] = thisfloat
-                    secondMap[a, b] = 0
+                    thisMap[a, b] = thisfloat[0]
+                    secondMap[a, b] = 0 #used for the measuredNodeMap
             # End for loop
             # Store into the main list of maps
             self.MyNodeMaps[name] = thisMap
             self.MeasuredNodeMaps[name] = secondMap
             # also need to store the AntennaGains at some point into the system
             # TODO! store antenna gains from file that we read in RoI?
-        # End antenna file loop
+            self.AntennaGains[name] = 3
+        #         # End antenna file loop
 
         # If simulation
         self.SensorMode = mode  # 0 = simulation, 1 = real time, 2 = test
-        self.RF_SimModel = RF_Models.Simple_RF_Model(1)  # load the simulation model here
+        self.RF_SimModel = RF_Models.Simple_RF_Model(1,CLLA=clla)  # load the simulation model here
         self.transmitter = {}
-        self.transmitter["NodeA"] = RF_Models.RF_Transmitter(3,3,2400000000,[40.147011,-105.241987])
-        self.transmitter["NodeB"] = RF_Models.RF_Transmitter(3,3,2400000000,[40.138018,-105.244482])
+        self.transmitter["NodeA"] = RF_Models.RF_Transmitter(3,3,2400000000,[40.145217,-105.244637,self.refAlt])
+        self.transmitter["NodeB"] = RF_Models.RF_Transmitter(3,3,2400000000,[40.120810,-105.244356,self.refAlt])
         # TODO! load the antenna file information from SPLAT!
         self.logger.info("Set RF Sim Model to Noise Model 1")
 
         # Serial link?
 
     def run(self):
+        #Set all the global variables
         global myState
+        global measuring_nodes
         # Build the data type
         rf_data_msg = PyPackets_pb2.RF_Data_Msg()
         rf_data_msg.ID = str(self.MYID.getBytes())
@@ -441,7 +302,7 @@ class SensingTask(threading.Thread):
                 if self.SensorMode == 0:
                     self.logger.debug("Sensor Mode 0")
                     # if our state is not null
-                    if myState: #TODO! Fix to a different check; is empty?
+                    if myState:
                         self.logger.debug("Found State: Proceeding to generate RF data")
 
                         # if the state is 1A Kinematics Model
@@ -463,29 +324,30 @@ class SensingTask(threading.Thread):
                         # Determine my location in the grid
                         # -------X----------
                         xgrid = Splat_Processing.findGridIndex(myState[1], self.xspacing, self.xcenterIndex,
-                                                               self.xgridlength)
+                                                               self.xgridlength-1)
                         # -------Y----------
                         ygrid = Splat_Processing.findGridIndex(myState[0], self.yspacing, self.ycenterIndex,
-                                                               self.ygridlength)
-
+                                                               self.ygridlength-1)
+                        self.logger.debug("Position is %f : %f", myState[1], myState[0])
+                        self.logger.debug("Grids are %i : %i", xgrid, ygrid)
                         # RF Part
-                        # TODO! Update with new scheme for naming of nodes; list of nodes to measure/loop through them
+                        #TODO! Move this into a separate function for easy modification/debugging
+                        #TODO! Verify that this now works
                         for s in measuring_nodes:
-                            self.logger.debug("Generating data for %s", node_name)
                             node_name = s
+                            self.logger.debug("Generating data for %s", node_name)
                             # Get the predicted path loss value
                             map = self.MyNodeMaps[node_name]
                             pl_predicted = map[xgrid, ygrid]
                             # create a new rf measurement for the message
                             new = rf_data_msg.rfNode.add()
                             new.chanID = node_name
-                            new.rssi = -150  # place holder
-
+                            #new.rssi = -150  # place holder
                             new.rssi = float(self.RF_SimModel.generateMeasurement(self.transmitter[s], [myState[1],myState[2],-myState[5]], self.ReceiverGains)) #Transmitter, ENU Position
                             # Calculate the measured path loss using the antenna gains (no antenna pointing assumed)
                             new.pl_msr = float(-(new.rssi - self.AntennaGains[node_name] - self.ReceiverGains))
                             # figure out what the prediction error is
-                            new.pl_prediction_error = float(pl_predicted - new.pl_msr)
+                            new.pl_error = float(pl_predicted - new.pl_msr)
                             # add in the grid location
                             new.xgridNum = xgrid
                             new.ygridNum = ygrid
@@ -497,13 +359,10 @@ class SensingTask(threading.Thread):
                         # increment counter
                         rf_msg_counter = rf_msg_counter + 1
 
-                        # TODO! Add in packet logger
-
                         # Log
                         self.logger.info("RF Data Msg number %i with time value: %f", rf_data_msg.packetNum,
                                          rf_data_msg.time)
 
-                        # TODO! Erroring as a result of not filling message as a result of an Else throw
                         # serialize
                         data_str = rf_data_msg.SerializeToString()
 
@@ -544,6 +403,7 @@ class SensingTask(threading.Thread):
                     ygrid = Splat_Processing.findGridIndex(ENU[1], self.yspacing, self.ycenterIndex, self.ygridlength)
 
                     # RF data part
+                    #TODO! Pull out into a separate function for easy modification
                     # TODO! UPDATE WITH NEW PATHLOSS PARTS
                     try:
                         # TODO fix serial
@@ -566,6 +426,7 @@ class SensingTask(threading.Thread):
                                 pl_predicted = map[xgrid, ygrid]
 
                                 new = rf_data_msg.rfNode.add()
+                                #CHannel ID is actually which node its coming from
                                 new.chanID = node_name
                                 # calculate the "measured path loss"
                                 # TODO! Update with new method of getting channel gains
@@ -588,13 +449,11 @@ class SensingTask(threading.Thread):
                         rf_data_msg.packetNum = rf_msg_counter
                         # increment counter
                         rf_msg_counter = rf_msg_counter + 1
-                        #TODO! Add in packet logger
 
                         # Log
                         self.logger.info("RF Data Msg number %i with time value: %f", rf_data_msg.packetNum,
                                          rf_data_msg.time)
 
-                        # TODO! Erroring as a result of not filling message as a result of an Else throw
                         # serialize
                         data_str = rf_data_msg.SerializeToString()
 
@@ -628,7 +487,6 @@ class SensingTask(threading.Thread):
                     rf_data_msg.attitude.z = 0
                     rf_data_msg.airspeed = 15
 
-                    # TODO! Update / verify the chanID being used is appropriate for scheme in learning alg.
                     for ind in range(0, 3):
                         newnode = rf_data_msg.rfNode.add()
                         if ind == 0:
@@ -654,7 +512,6 @@ class SensingTask(threading.Thread):
                     self.logger.info("RF Data Msg number %i with time value: %f", rf_data_msg.packetNum,
                                      rf_data_msg.time)
 
-                    # TODO! Erroring as a result of not filling message as a result of an Else throw
                     # serialize
                     data_str = rf_data_msg.SerializeToString()
 
@@ -683,30 +540,6 @@ class SensingTask(threading.Thread):
         self.logger.info("Closing Sensor Task")
         print('\t SensorTask [closed]')
 
-
-def loadMetaData(filename):
-    meta_data_f = open(filename, 'r')
-    # Skip the defintions
-    for v in xrange(0, 9):
-        meta_data_f.readline()  # remove the header info
-    # Read the RoI info
-    centerLat = float(meta_data_f.readline())  # cast as float
-    centerLon = float(meta_data_f.readline())  # cast as float
-    north = float(meta_data_f.readline())
-    south = float(meta_data_f.readline())
-    east = float(meta_data_f.readline())
-    west = float(meta_data_f.readline())
-    xspacing = float(meta_data_f.readline())
-    yspacing = float(meta_data_f.readline())
-    # Get the antenna information
-    Antenna = []
-    for line in meta_data_f:
-        print(line)
-        Antenna.append(line)
-
-    return centerLat, centerLon, north, south, east, west, xspacing, yspacing, Antenna
-
-
 if __name__ == "__main__":
     # Load a simulation file that has starting location and simulation model info
     mainlogger = logging.getLogger("CommAwareApp:Main")
@@ -723,6 +556,8 @@ if __name__ == "__main__":
     parser.add_argument('ROI_FILE', type=str)
     parser.add_argument('ALTITUDE', type=str)
     parser.add_argument('NODES', type=str)  # list like NodeA,NodeB
+    #TODO! Add logmode to the arguments
+    #TODO! Add oeprational mode to the arugments
     # Nodes to plan on
 
     # Parse the argument information
@@ -733,7 +568,10 @@ if __name__ == "__main__":
     IP = 'localhost'
     PORT = 14300
     # Loop through and add all of these into the list somehow: CHECK OUT ARGPARSE PYTHON DOCS
-    planning_nodes.append(args.NODES[0])
+    planning_nodes = args.NODES.split(",")
+    learning_nodes = planning_nodes
+    measuring_nodes = planning_nodes
+    #planning_nodes.append(args.NODES) #NODES[0] is grabbing the first character
 
     # Parse this programs ID information (Platform and Number)
     SYSTEM_PLATFORM = PyPacket.PlatformDispatch[PyPacket.formatPlatformString(args.SYSTEM_PLATFORM)]()
@@ -751,10 +589,10 @@ if __name__ == "__main__":
     SUB_INFO_STATE = [PyPacket.PacketPlatform.AIRCRAFT, SYSTEM_NUMBER]
 
     # HARD coded debug mode for now
-    LOGMODE = 10
+    LOGMODE = 10 #TODO UPdate with arg parser
 
     # Load Meta Data from Region File
-    meta_data = loadMetaData(RoI_FILE)
+    meta_data = Splat_Processing.loadMetaData(RoI_FILE)
     # mainlogger.critical("Couldn't find and open RoI File")
 
     # parse the meta data, everything else will be grabbed when needed
@@ -762,7 +600,7 @@ if __name__ == "__main__":
     x_grid_length = (meta_data[4] + meta_data[5]) / meta_data[6] + 1
     y_grid_length = (meta_data[2] + meta_data[3]) / meta_data[7] + 1
     # center index
-    x_center_Index = math.ceil(x_grid_length / 2)
+    x_center_Index = math.ceil(x_grid_length / 2)  #TODO! I think the center position is off by 1
     y_center_Index = math.ceil(y_grid_length / 2)
 
     # GridInfo = [-west, east, xspacing, -south, north, yspacing]
@@ -770,7 +608,7 @@ if __name__ == "__main__":
     # GridInfo2 = [x_grid_length,y_grid_length,x_center_index,y_center_index]
     Grid_Info_2 = [x_grid_length, y_grid_length, x_center_Index, y_center_Index]
     # centerPoint = [lat,lon]
-    center_Point = [meta_data[0], meta_data[1]]
+    center_Point = [meta_data[0], meta_data[1], 0]
     # Pull out antenna information
     Antenna = meta_data[8]
     # Pull out the antenna names
@@ -781,6 +619,7 @@ if __name__ == "__main__":
         Antenna_Names.append(strvalues[0])
         # TODO! Anything else to retrieve from this bits of information?
 
+    #TODO! update with arg parser
     MODE_FLAG = 0  # 0 is sim, 1 is run, 2 is test
 
     if MODE_FLAG == 1:
@@ -789,14 +628,14 @@ if __name__ == "__main__":
         connection_string = '/dev/ttyS1'
         # connection_string = 'udp:0.0.0.0:14551'
         print 'Connecting to vehicle on: %s' % (connection_string)
-        vehicle = connect(connection_string, baud=57600, _initialize=True, wait_ready=None)
+        vehicle = connect(connection_string, baud=57600, _initialize=True, wait_ready=None) #TODO! Not sure if this needs to be set as a global variable
 
     # =================================
     # Start Telemetry Thread
     telem = TelemetryTask(MY_ID, SUB_INFO_RF, SUB_INFO_GCS, SUB_INFO_STATE, PORT, IP, LOGMODE, Grid_Info, center_Point)
     telem.start()
     # Start Sensing Thread
-    sensing = SensingTask(Antenna_Names, ALTITUDE, Grid_Info, Grid_Info_2, LOGMODE, center_Point, MY_ID, MODE_FLAG)
+    sensing = SensingTask(Antenna_Names, ALTITUDE, Grid_Info, Grid_Info_2, LOGMODE, center_Point, MY_ID, MODE_FLAG, center_Point)
     sensing.start()
     # =================================
 

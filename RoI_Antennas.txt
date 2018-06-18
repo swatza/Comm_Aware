@@ -7,13 +7,13 @@
 #x spacing (meters)
 #y spacing (meters)
 #AntennaName,Lat,Lon,Antenna Height (m),Pt (dBm),Gt (dBi)
-40.1304
--105.3928
+40.137978
+-105.244690
 1500
 1500
 1500
 1500
 50
 50
-NodeA,40.1304,-105.3928,2,30,3
-NodeB,39.4940,-104.3921,2,30,3
+NodeA,40.145217,-105.244637,2,30,3
+NodeB,40.120810,-105.244356,2,30,3

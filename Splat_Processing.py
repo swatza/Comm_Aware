@@ -27,7 +27,6 @@ path_to_splat = ""
 	#assign values for each of the grids 
 
 	#Save file and output in new binary form (header + row/column of floats for the PL value)
-
 def SPLATDataGenerationMethod2(Aircraft_Height):
 	RoIFilename = "RoI_Antennas.txt"
 	#load in RoI and Antenna info from file
@@ -165,9 +164,9 @@ def findGridIndex(V, spacing, centerInd, vlength):
 	if (new_index < 0):
 		return 0
 	else:
-		out = round(new_index)
+		out = int(round(new_index))
 		if (out > vlength):
-			return vlength
+			return int(vlength)
 		else:
 			return out
 
@@ -212,6 +211,27 @@ def findPLinFile(a,b,length):
 	byteNumber = (length*b + a)*4 + 8*4
 	return byteNumber
 
+def loadMetaData(filename):
+    meta_data_f = open(filename, 'r')
+    # Skip the defintions
+    for v in xrange(0, 9):
+        meta_data_f.readline()  # remove the header info
+    # Read the RoI info
+    centerLat = float(meta_data_f.readline())  # cast as float
+    centerLon = float(meta_data_f.readline())  # cast as float
+    north = float(meta_data_f.readline())
+    south = float(meta_data_f.readline())
+    east = float(meta_data_f.readline())
+    west = float(meta_data_f.readline())
+    xspacing = float(meta_data_f.readline())
+    yspacing = float(meta_data_f.readline())
+    # Get the antenna information
+    Antenna = []
+    for line in meta_data_f:
+        print(line)
+        Antenna.append(line)
+
+    return centerLat, centerLon, north, south, east, west, xspacing, yspacing, Antenna
 
 def testFile():
 	filename = "NodeA_data_100.sdg"
