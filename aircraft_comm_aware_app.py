@@ -421,6 +421,7 @@ class SensingTask(threading.Thread):
                                 rf_sensor_chan.append(rf_chan)
                                 rf_sensor_data.append(rf_data)
 
+                                self.logger.info("Got measurements from sensor")
                                 node_name = measuring_nodes[counter]
                                 map = self.MyNodeMaps[node_name]
                                 pl_predicted = map[xgrid, ygrid]
@@ -441,6 +442,7 @@ class SensingTask(threading.Thread):
                                 new.ygridNum = ygrid
                                 # increment counter for stuffing into node stuff
                                 counter += 1
+                                self.logger.info("Survived a loop of getting sensor measurements")
                             else:
                                 pass
 
