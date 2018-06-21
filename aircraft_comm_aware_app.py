@@ -396,7 +396,7 @@ class SensingTask(threading.Thread):
 
                     # -First determine indexes
                     ENU = assorted_lib.LLA2ENU([rf_data_msg.lla.x, rf_data_msg.lla.y, rf_data_msg.lla.z],
-                                               [self.centerLat, self.centerLon, self.refAlt])
+                                               [vehicle.location.global_frame.lat, vehicle.location.global_frame.lon, self.refAlt])
                     # -------X----------
                     xgrid = Splat_Processing.findGridIndex(ENU[0], self.xspacing, self.xcenterIndex, self.xgridlength)
                     # -------Y----------
