@@ -412,37 +412,40 @@ class SensingTask(threading.Thread):
                         counter = 0
                         for s in range(0, len(entries)):
                             if entries[s].startswith('C'):
-                                # ==============================
-                                # ASSUMING CH1 == NodeA, etc....
-                                # ==============================
-                                # THIS MIGHT NEED TO BE FIXED; validate with hardware
-                                rf_chan = entries[s]
-                                rf_data = entries[s + 1], entries[s + 2]  # TODO! which is omni which is directional?
-                                rf_sensor_chan.append(rf_chan)
-                                rf_sensor_data.append(rf_data)
+                                if counter == len(measuring_nodes):
+                                    break
+                                else:
+                                    # ==============================
+                                    # ASSUMING CH1 == NodeA, etc....
+                                    # ==============================
+                                    # THIS MIGHT NEED TO BE FIXED; validate with hardware
+                                    rf_chan = entries[s]
+                                    rf_data = entries[s + 1], entries[s + 2]  # TODO! which is omni which is directional?
+                                    rf_sensor_chan.append(rf_chan)
+                                    rf_sensor_data.append(rf_data)
 
-                                self.logger.info("Got measurements from sensor")
-                                node_name = measuring_nodes[counter]
-                                map = self.MyNodeMaps[node_name]
-                                pl_predicted = map[xgrid, ygrid]
+                                    self.logger.info("Got measurements from sensor")
+                                    node_name = measuring_nodes[counter]
+                                    map = self.MyNodeMaps[node_name]
+                                    pl_predicted = map[xgrid, ygrid]
 
-                                new = rf_data_msg.rfNode.add()
-                                #CHannel ID is actually which node its coming from
-                                new.chanID = node_name
-                                # calculate the "measured path loss"
-                                # TODO! Update with new method of getting channel gains
-                                msred_pl = -(rf_data[0] - self.AntennaGains[node_name] - self.ReceiverGains)
-                                # the error between measured and predicted
-                                pl_prediction_error = pl_predicted - msred_pl
+                                    new = rf_data_msg.rfNode.add()
+                                    #CHannel ID is actually which node its coming from
+                                    new.chanID = node_name
+                                    # calculate the "measured path loss"
+                                    # TODO! Update with new method of getting channel gains
+                                    msred_pl = -(float(rf_data[0]) - self.AntennaGains[node_name] - self.ReceiverGains)
+                                    # the error between measured and predicted
+                                    pl_prediction_error = pl_predicted - msred_pl
 
-                                new.rssi = float(rf_data[0])
-                                new.pl_msr = float(msred_pl)
-                                new.pl_error = float(pl_prediction_error)
-                                new.xgridNum = xgrid
-                                new.ygridNum = ygrid
-                                # increment counter for stuffing into node stuff
-                                counter += 1
-                                self.logger.info("Survived a loop of getting sensor measurements")
+                                    new.rssi = float(rf_data[0])
+                                    new.pl_msr = float(msred_pl)
+                                    new.pl_error = float(pl_prediction_error)
+                                    new.xgridNum = xgrid
+                                    new.ygridNum = ygrid
+                                    # increment counter for stuffing into node stuff
+                                    counter += 1
+                                    self.logger.info("Survived a loop of getting sensor measurements")
                             else:
                                 pass
 
