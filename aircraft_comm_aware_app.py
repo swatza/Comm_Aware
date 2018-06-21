@@ -206,7 +206,7 @@ class SensingTask(threading.Thread):
         self.packet_log = PyPacketLogger.PyPacketLogger(
             ('Aircraft_' + my_id.getPlatform() + str(my_id.getIdentifier()) + '_Sensing_Task_Log'))
         self.packet_log.initFile()
-        self.logger.info("Logging Sensor Packets to: ", self.packet_log.logname)
+        self.logger.info("Logging Sensor Packets to: %s", self.packet_log.logname)
 
         # important parameters
         self.center = center_pos
