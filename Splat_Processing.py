@@ -136,7 +136,7 @@ def SPLATDataGenerationMethod2(Aircraft_Height):
 				#-------Y----------
 				ygrid = findGridIndex(ENU[1],yspacing,ycenterIndex,ygridlength)
 				#add the pl value to the correct grid
-				#PathLossField[xgrid,ygrid] = PathLossField[xgrid,ygrid] + pl
+				PathLossField[xgrid,ygrid] = PathLossField[xgrid,ygrid] + pl
 			#else just end
 		#End loop
 		thisoutfile = name + "_data_" + str(Aircraft_Height) + ".sdg"

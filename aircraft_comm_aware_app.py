@@ -49,8 +49,9 @@ msg_queue = Queue.Queue()
 # My Aircraft State for simulation
 myState = 0
 
-# Which Nodes to Learn
+# Which nodes to plan on
 planning_nodes = []
+# Which Nodes to Learn
 learning_nodes = []
 # Which nodes to measure
 measuring_nodes = []
@@ -384,7 +385,6 @@ class SensingTask(threading.Thread):
                 # -----------------
                 elif self.SensorMode == 1:
                     # Pull vehicle data using dronekit
-                    # TODO! Add in the serial portion of the project (check Katie's code)
                     rf_data_msg.lla.x = vehicle.location.global_frame.lat
                     rf_data_msg.lla.y = vehicle.location.global_frame.lon
                     rf_data_msg.lla.z = vehicle.location.global_relative_frame.alt
@@ -555,9 +555,10 @@ if __name__ == "__main__":
     parser.add_argument('LEARNING_NUMBER', type=int)
     parser.add_argument('ROI_FILE', type=str)
     parser.add_argument('ALTITUDE', type=str)
-    parser.add_argument('NODES', type=str)  # list like NodeA,NodeB
-    #TODO! Add logmode to the arguments
-    #TODO! Add oeprational mode to the arugments
+    parser.add_argument('MEASURING_NODES', type=str)  # list like NodeA,NodeB
+    parser.add_argument('LEARNING_NODES',type=str)
+    parser.add_argument('LOGMODE',type=int)
+    parser.add_argument('MODE',type=int)
     # Nodes to plan on
 
     # Parse the argument information
@@ -568,9 +569,9 @@ if __name__ == "__main__":
     IP = 'localhost'
     PORT = 14300
     # Loop through and add all of these into the list somehow: CHECK OUT ARGPARSE PYTHON DOCS
-    planning_nodes = args.NODES.split(",")
-    learning_nodes = planning_nodes
-    measuring_nodes = planning_nodes
+    planning_nodes = args.MEASURING_NODES.split(",")
+    learning_nodes = args.MEASURING_NODES.split(",")
+    measuring_nodes = args.LEARNING_NODES.split(",")
     #planning_nodes.append(args.NODES) #NODES[0] is grabbing the first character
 
     # Parse this programs ID information (Platform and Number)
@@ -589,7 +590,7 @@ if __name__ == "__main__":
     SUB_INFO_STATE = [PyPacket.PacketPlatform.AIRCRAFT, SYSTEM_NUMBER]
 
     # HARD coded debug mode for now
-    LOGMODE = 10 #TODO UPdate with arg parser
+    LOGMODE = args.LOGMODE
 
     # Load Meta Data from Region File
     meta_data = Splat_Processing.loadMetaData(RoI_FILE)
@@ -619,8 +620,8 @@ if __name__ == "__main__":
         Antenna_Names.append(strvalues[0])
         # TODO! Anything else to retrieve from this bits of information?
 
-    #TODO! update with arg parser
-    MODE_FLAG = 0  # 0 is sim, 1 is run, 2 is test
+    #Mode 0,1,2 (Sim,Operational,Test)
+    MODE_FLAG = args.MODE
 
     if MODE_FLAG == 1:
         from dronekit import connect
