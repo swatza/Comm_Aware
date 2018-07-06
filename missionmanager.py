@@ -50,6 +50,7 @@ class MissionManager(object):
         # A loiter and RTL are added to the end of the planned path as a safety precaution
 
         missionlist = [] # initialize the mission list
+        missionlist = [] # initialize the mission list
         path_length = pts.shape[1] # The number of columns in the path list
         for i in range(0, path_length + 2):
             if i == id_jump:

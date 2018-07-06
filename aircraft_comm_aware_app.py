@@ -35,6 +35,8 @@ import RF_Models
 import assorted_lib
 import PyPacketLogger
 import Splat_Processing
+import PyUAS_Ardupilot_Mission_Manager
+import mav_command_wrappers
 
 # rf_connect = "/dev/ttyUSB0" #how to read in rf signal data
 rf_connect = "/dev/ttyS4"  # how to read in rf signal data -- beaglebone companion computer
@@ -56,6 +58,8 @@ learning_nodes = []
 # Which nodes to measure
 measuring_nodes = []
 
+previous_waypoint_pair= 0 #0 = A,B; 1 = B,C; 2 = A,C
+
 def parseStateInfo(data, CLLA):
     # parse the state information
     msg = PyPackets_pb2.AircraftPixhawkState()
@@ -71,6 +75,50 @@ def parseStateInfo(data, CLLA):
     # Set the state as 1A Kinematics for now
     global myState
     myState = [NED[0],NED[1],0,msg.attitude.z,0,NED[2],msg.airspeed]
+
+def parseWaypointMsg(data, center):
+    #parse into google buffer
+    msg = PyPackets_pb2.Waypoint()
+    msg.ParseFromString(data)
+    loiter_radius = 50
+    ttl = 300
+    altitude = apmm.altitude # get the set altitude from the object
+
+    # Get the relevant information
+    if(msg.frame == "LLA"):
+        gps_location = [msg.Pos.x, msg.Pos.y]
+        new_command = mav_command_wrappers.createLoiterTimeCmd(ttl,loiter_radius,altitude,gps_location)
+        apmm.goToGuided()
+        apmm.resetMission()
+        apmm.addToMission(new_command)
+        apmm.activateMission()  # move the mission list into the command list buffer
+        apmm.uploadCommands()  # upload that command list buffer to the ardupilot
+        apmm.goToAuto()  # restart the mission (goes to mission 1)
+    elif(msg.frame == "ENU"):
+        enu = [msg.Pos.x,msg.Pos.y,msg.Pos.z]
+
+        gps_location = assorted_lib.ENU2LLA(enu,center)
+        new_command = mav_command_wrappers.createLoiterTimeCmd(ttl, loiter_radius, altitude, gps_location)
+        apmm.goToGuided()
+        apmm.resetMission()
+        apmm.addToMission(new_command)
+        apmm.activateMission()  # move the mission list into the command list buffer
+        apmm.uploadCommands()  # upload that command list buffer to the ardupilot
+        apmm.goToAuto()  # restart the mission (goes to mission 1)
+    elif(msg.frame == "NED"):
+        ned = [msg.Pos.x, msg.Pos.y, msg.Pos.z]
+        gps_location = assorted_lib.NED2LLA(ned, center)
+        new_command = mav_command_wrappers.createLoiterTimeCmd(ttl, loiter_radius, altitude, gps_location)
+        apmm.goToGuided()
+        apmm.resetMission()
+        apmm.addToMission(new_command)
+        apmm.activateMission()  # move the mission list into the command list buffer
+        apmm.uploadCommands()  # upload that command list buffer to the ardupilot
+        apmm.goToAuto()  # restart the mission (goes to mission 1)
+    else:
+        print("ERROR!!!: Unknown frame for new waypoint; switching to RTL")
+        # mainlogger.error("Unknown Command Type: Switching to RTL ")
+        apmm.goToRTL()
 
 class TelemetryTask(threading.Thread):
 
@@ -117,6 +165,7 @@ class TelemetryTask(threading.Thread):
         self.logger.debug("Finished initializing telemetry task")
 
     def run(self):
+        global previous_waypoint_pair
         # Create Socket Objects
         my_out_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         my_in_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -132,7 +181,7 @@ class TelemetryTask(threading.Thread):
         msg_queue.put(msg)
         lastsubtime = time.time()
         lastcmdtime = time.time()
-        learn_counter = 1;
+        learn_counter = 1
 
         # Loop Forever
         while not shutdown_event.is_set():
@@ -144,9 +193,35 @@ class TelemetryTask(threading.Thread):
 
             if(time.time() - lastcmdtime) > 60:
                 lastcmdtime = time.time()
-                #build command message
+                # build command message
+                pn = []
                 print("Sending Learn Command")
-                cmd_msg = PyPacketMsgBuilds.buildRFLearnCommand(self.ID,learn_counter,learning_nodes,planning_nodes,"true","error")
+                if planning_nodes[0] == "None":
+                    wptflag = "False"
+                    pn = planning_nodes
+                elif len(planning_nodes) == 2:
+                    wptflag = "True"
+                    pn = planning_nodes
+                    self.logger.info("Planning on the Error between %s, %s", pn[0], pn[1])
+                elif len(planning_nodes) == 3:
+                    if(previous_waypoint_pair == 0):
+                        pn.append("NodeA")
+                        pn.append("NodeB")
+                    elif previous_waypoint_pair == 1:
+                        pn.append("NodeB")
+                        pn.append("NodeC")
+                    elif previous_waypoint_pair == 2:
+                        pn.append("NodeA")
+                        pn.append("NodeC")
+                    previous_waypoint_pair += 1
+                    if previous_waypoint_pair > 2:
+                        previous_waypoint_pair = 0
+                    self.logger.info("Planning on the Error between %s, %s", pn[0], pn[1])
+                #end elseif
+                else:
+                    pn = planning_nodes
+                    wptflag = "False"
+                cmd_msg = PyPacketMsgBuilds.buildRFLearnCommand(self.ID,learn_counter,learning_nodes,pn,wptflag,"error") #change this if we want to learn on the error or full data
                 msg_queue.put(cmd_msg)
 
             # Check select
@@ -162,6 +237,7 @@ class TelemetryTask(threading.Thread):
                 if PyPacketTypeCheck.isWaypointMsg(newPkt):
                     self.logger.debug("Received Waypoint Msg: WIP")
                     #TODO! Handle the waypoint message
+                    parseWaypointMsg(newPkt.getData(), self.CLLA)
                 elif PyPacketTypeCheck.isAutoPilotPixhawkMsg(newPkt):  # used for simulating the aircraft's position
                     self.logger.debug("Received State Info Msg: Sim")
                     parseStateInfo(newPkt.getData(), self.CLLA)
@@ -280,7 +356,7 @@ class SensingTask(threading.Thread):
         newPacket.setID(self.MYID.getBytes())
 
         # Sensor rate
-        sensor_rate = 1  # Set to 5Hz #TODO! where should we set this?
+        sensor_rate = 5  # Set to 5Hz
         rf_msg_counter = 0
 
         if self.SensorMode == 1:
@@ -333,7 +409,6 @@ class SensingTask(threading.Thread):
                         self.logger.debug("Grids are %i : %i", xgrid, ygrid)
                         # RF Part
                         #TODO! Move this into a separate function for easy modification/debugging
-                        #TODO! Verify that this now works
                         for s in measuring_nodes:
                             node_name = s
                             self.logger.debug("Generating data for %s", node_name)
@@ -404,9 +479,7 @@ class SensingTask(threading.Thread):
 
                     # RF data part
                     #TODO! Pull out into a separate function for easy modification
-                    # TODO! UPDATE WITH NEW PATHLOSS PARTS
                     try:
-                        # TODO fix serial
                         line = ser.readline()
                         entries = line.split(",")
                         counter = 0
@@ -421,8 +494,9 @@ class SensingTask(threading.Thread):
                                     # THIS MIGHT NEED TO BE FIXED; validate with hardware
                                     rf_chan = entries[s]
                                     rf_data = entries[s + 1], entries[s + 2]  # TODO! which is omni which is directional?
-                                    rf_sensor_chan.append(rf_chan)
-                                    rf_sensor_data.append(rf_data)
+                                    # Believe these are not needed
+                                    # rf_sensor_chan.append(rf_chan)
+                                    # rf_sensor_data.append(rf_data)
 
                                     self.logger.info("Got measurements from sensor")
                                     node_name = measuring_nodes[counter]
@@ -439,6 +513,7 @@ class SensingTask(threading.Thread):
                                     pl_prediction_error = pl_predicted - msred_pl
 
                                     new.rssi = float(rf_data[0])
+                                    new.rssi2 = float(rf_data[1])
                                     new.pl_msr = float(msred_pl)
                                     new.pl_error = float(pl_prediction_error)
                                     new.xgridNum = xgrid
@@ -562,6 +637,7 @@ if __name__ == "__main__":
     parser.add_argument('ALTITUDE', type=str)
     parser.add_argument('MEASURING_NODES', type=str)  # list like NodeA,NodeB
     parser.add_argument('LEARNING_NODES',type=str)
+    parser.add_argument('PLANNING_NODES',type=str)
     parser.add_argument('LOGMODE',type=int)
     parser.add_argument('MODE',type=int)
     # Nodes to plan on
@@ -573,11 +649,23 @@ if __name__ == "__main__":
     ALTITUDE = args.ALTITUDE
     IP = 'localhost'
     PORT = 14300
-    # Loop through and add all of these into the list somehow: CHECK OUT ARGPARSE PYTHON DOCS
-    planning_nodes = args.MEASURING_NODES.split(",")
+
+    planning_nodes = []
+    if args.PLANNING_NODES == "Triangle":
+        planning_nodes.append("NodeA")
+        planning_nodes.append("NodeB")
+        planning_nodes.append("NodeC")
+    elif args.PLANNING_NODES == "Simple":
+        planning_nodes.append("NodeA")
+        planning_nodes.append("NodeB")
+    elif args.PLANNING_NODES == "None":
+        print "Not Planning on this mission"
+        planning_nodes = args.PLANNING_NODES
+    else:
+        print "Critical Error: Unknown Planning Scheme"
+
     learning_nodes = args.MEASURING_NODES.split(",")
     measuring_nodes = args.LEARNING_NODES.split(",")
-    #planning_nodes.append(args.NODES) #NODES[0] is grabbing the first character
 
     # Parse this programs ID information (Platform and Number)
     SYSTEM_PLATFORM = PyPacket.PlatformDispatch[PyPacket.formatPlatformString(args.SYSTEM_PLATFORM)]()
@@ -625,16 +713,17 @@ if __name__ == "__main__":
         Antenna_Names.append(strvalues[0])
         # TODO! Anything else to retrieve from this bits of information?
 
-    #Mode 0,1,2 (Sim,Operational,Test)
+    # Mode 0,1,2 (Sim, Operational, Test)
     MODE_FLAG = args.MODE
 
     if MODE_FLAG == 1:
-        from dronekit import connect
 
-        connection_string = '/dev/ttyS1'
+        connection_string = '/dev/ttyS1' # BeagleBone Setup
         # connection_string = 'udp:0.0.0.0:14551'
         print 'Connecting to vehicle on: %s' % (connection_string)
-        vehicle = connect(connection_string, baud=57600, _initialize=True, wait_ready=None) #TODO! Not sure if this needs to be set as a global variable
+        apmm = PyUAS_Ardupilot_Mission_Manager.ArduPilotMissionManager(connection_string, "aircraft_test", ALTITUDE, [meta_data[0],meta_data[1]])
+        # vehicle = connect(connection_string, baud=57600, _initialize=True, wait_ready=None)
+        vehicle = apmm.vehicle
 
     # =================================
     # Start Telemetry Thread

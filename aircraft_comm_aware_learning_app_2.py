@@ -168,7 +168,7 @@ def handleRFLearnMsg(my_id, packetData, counter,grid,msg_queue,l,node_counts, no
     nodepoints = rf_learn_cmd.NodesToPlan
     if rf_learn_cmd.calculateWaypointFlag == "True":
         wpt_msg = PyPackets_pb2.Waypoint()
-        #Calculate the grids
+        # Calculate the grids
         xmin = grid[0]
         xmax = grid[1]
         ymin = grid[3]
@@ -179,36 +179,36 @@ def handleRFLearnMsg(my_id, packetData, counter,grid,msg_queue,l,node_counts, no
         x_grids = np.arange(xmin, xmax, xspacing)
         y_grids = np.arange(ymin, ymax, yspacing)
 
-        #Build Two maps
+        # Build Two maps
         MyMaps = {}
         for map in BigMsg.mapMsg:
             this_map = {}
-            #loop through and grab all the cells in the map
+            # loop through and grab all the cells in the map
             for c in map.cell:
                 x = c.xgridNum
                 y = c.ygridNum
                 this_map[x,y] = c.est_path_loss
-            #end cell loop
+            # end cell loop
             MyMaps[map.ID] = this_map
             del this_map
-        #End map loop
-        #Calculate the waypoint between the nodes we want
+        # End map loop
+        # Calculate the waypoint between the nodes we want
         location = comm_aware_control_tools.find_optimal_2_node_location(MyMaps,nodepoints,len(x_grids),len(y_grids))
         l.acquire()
         print "We have found the optimal location to fly to in ENU Coordinates"
         l.release()
-        #build the waypoint message (Not in LLA
+        # build the waypoint message (Not in LLA)
         wpt_msg.Pos.x = x_grids[location[0]]
         wpt_msg.Pos.y = y_grids[location[1]]
         wpt_msg.Pos.z = 0
         wpt_msg.frame = "ENU"
         wds = wpt_msg.SerializeToString()
-        #Log to pypacket logger
+        # Log to pypacket logger
         wpt_packet.setData(wds)
         packet_log.writePacketToLog(wpt_packet)
-        #Add to msg que
+        # Add to msg que
         msg_queue.put(wpt_packet.getPacket())
-    #Add the packet to the msg_queue
+    # Add the packet to the msg_queue
     return
 
 
