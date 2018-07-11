@@ -506,14 +506,19 @@ class SensingTask(threading.Thread):
                                     new = rf_data_msg.rfNode.add()
                                     #CHannel ID is actually which node its coming from
                                     new.chanID = node_name
+                                    #Using Atheros method max rssi is 60 but subtract 90 instead of 95
+                                    rssi_calc = float(rf_data[0]) / 100 * 60 + -90
                                     # calculate the "measured path loss"
                                     # TODO! Update with new method of getting channel gains
-                                    msred_pl = -(float(rf_data[0]) - self.AntennaGains[node_name] - self.ReceiverGains)
-                                    # the error between measured and predicted
+                                    msred_pl = -(rssi_calc - self.AntennaGains[node_name] - self.ReceiverGains)
+                                    # the error between predicted and measured
                                     pl_prediction_error = pl_predicted - msred_pl
+                                    self.logger.debug("Raw Values in: %f and %f",float(rf_data[0]),float(rf_data[1]))
 
-                                    new.rssi = float(rf_data[0])
-                                    new.rssi2 = float(rf_data[1])
+                                    new.rssi = float(rf_data[0]) / 100 * 60 + -90
+                                    new.rssi2 = float(rf_data[1]) / 100 * 60 + -90
+                                    new.rssiRaw = float(rf_data[0])
+                                    new.rssiRaw2 = float(rf_data[1])
                                     new.pl_msr = float(msred_pl)
                                     new.pl_error = float(pl_prediction_error)
                                     new.xgridNum = xgrid
@@ -694,7 +699,7 @@ if __name__ == "__main__":
     x_grid_length = (meta_data[4] + meta_data[5]) / meta_data[6] + 1
     y_grid_length = (meta_data[2] + meta_data[3]) / meta_data[7] + 1
     # center index
-    x_center_Index = math.ceil(x_grid_length / 2)  #TODO! I think the center position is off by 1
+    x_center_Index = math.ceil(x_grid_length / 2)  # TODO! I think the center position is off by 1
     y_center_Index = math.ceil(y_grid_length / 2)
 
     # GridInfo = [-west, east, xspacing, -south, north, yspacing]
