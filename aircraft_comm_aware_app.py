@@ -498,7 +498,7 @@ class SensingTask(threading.Thread):
                                     # rf_sensor_chan.append(rf_chan)
                                     # rf_sensor_data.append(rf_data)
 
-                                    self.logger.info("Got measurements from sensor")
+                                    self.logger.debug("Got measurements from sensor")
                                     node_name = measuring_nodes[counter]
                                     map = self.MyNodeMaps[node_name]
                                     pl_predicted = map[xgrid, ygrid]
@@ -513,7 +513,7 @@ class SensingTask(threading.Thread):
                                     msred_pl = -(rssi_calc - self.AntennaGains[node_name] - self.ReceiverGains)
                                     # the error between predicted and measured
                                     pl_prediction_error = pl_predicted - msred_pl
-                                    self.logger.debug("Raw Values in: %f and %f",float(rf_data[0]),float(rf_data[1]))
+                                    self.logger.info("Raw Values in: %f and %f", float(rf_data[0]), float(rf_data[1]))
 
                                     new.rssi = float(rf_data[0]) / 100 * 60 + -90
                                     new.rssi2 = float(rf_data[1]) / 100 * 60 + -90
@@ -525,7 +525,7 @@ class SensingTask(threading.Thread):
                                     new.ygridNum = ygrid
                                     # increment counter for stuffing into node stuff
                                     counter += 1
-                                    self.logger.info("Survived a loop of getting sensor measurements")
+                                    self.logger.debug("Survived a loop of getting sensor measurements")
                             else:
                                 pass
 
@@ -726,7 +726,7 @@ if __name__ == "__main__":
         connection_string = '/dev/ttyS1' # BeagleBone Setup
         # connection_string = 'udp:0.0.0.0:14551'
         print 'Connecting to vehicle on: %s' % (connection_string)
-        apmm = PyUAS_Ardupilot_Mission_Manager.ArduPilotMissionManager(connection_string, "aircraft_test", ALTITUDE, [meta_data[0],meta_data[1]])
+        apmm = PyUAS_Ardupilot_Mission_Manager.ArduPilotMissionManager(connection_string, "aircraft_missions", ALTITUDE, [meta_data[0],meta_data[1]])
         # vehicle = connect(connection_string, baud=57600, _initialize=True, wait_ready=None)
         vehicle = apmm.vehicle
 
