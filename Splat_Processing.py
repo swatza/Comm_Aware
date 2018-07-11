@@ -19,7 +19,7 @@ path_to_splat = ""
 
 
 def SPLATDataGenerationMethod2(Aircraft_Height):
-    RoIFilename = "RoI_Antennas.txt"
+    RoIFilename = "RoI_Antennas_2.txt"
     # load in RoI and Antenna info from file
     meta_data_f = open(RoIFilename, 'r')
     # Skip the defintions
